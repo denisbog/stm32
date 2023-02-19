@@ -47,7 +47,7 @@ TIM_HandleTypeDef htim1;
 UART_HandleTypeDef huart1;
 
 /* USER CODE BEGIN PV */
-
+uint8_t Rx_data[1];
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -104,7 +104,7 @@ int main(void)
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
-
+	HAL_UART_Receive_IT(&huart1, Rx_data, 1);
 	while (1) {
 		step += 10;
 		HAL_GPIO_WritePin(LED1_GPIO_Port, LED1_Pin, 1);
@@ -378,6 +378,40 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim) {
 		state = 1;
 		HAL_TIM_Base_Stop_IT(&htim1);
 		HAL_UART_Transmit(&huart1, deactivate_message, sizeof(deactivate_message), 10);
+	}
+}
+
+
+#define LINEMAX 200 // Maximal allowed/expected line length
+volatile char line_buffer[LINEMAX + 1]; // Holding buffer with space for terminating NUL
+volatile int line_valid = 0;
+static char rx_buffer[LINEMAX];   // Local holding buffer to build line
+static int rx_index = 0;
+
+void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart) {
+	handle_received_char((char) Rx_data[0]);
+	if (line_valid) {
+		HAL_UART_Transmit(&huart1, (uint8_t*) &"\r\n", 2, 10);
+		line_valid = 0;
+	} else {
+		HAL_UART_Transmit(&huart1, (uint8_t*) Rx_data, sizeof(Rx_data), 10);
+	}
+	HAL_UART_Receive_IT(&huart1, Rx_data, 1);
+}
+
+void handle_received_char(char rx) {
+	if ((rx == '\r') || (rx == '\n')) {
+		if (rx_index != 0) {
+			memcpy((void*) line_buffer, rx_buffer, rx_index); // Copy to static line buffer from dynamic receive buffer
+			line_buffer[rx_index] = 0; // Add terminating NUL
+			line_valid = 1; // flag new line valid for processing
+
+			rx_index = 0; // Reset content pointer
+		}
+	} else {
+		if ((rx == '$') || (rx_index == LINEMAX)) // If resync or overflows pull back to start
+			rx_index = 0;
+		rx_buffer[rx_index++] = rx; // Copy to buffer and increment
 	}
 }
 
