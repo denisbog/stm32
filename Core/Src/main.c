@@ -470,12 +470,12 @@ void update_date_time(int selected_option, int value) {
 		break;
 	}
 	if (selected_option == 1 || selected_option == 2 || selected_option == 3) {
-		if (HAL_RTC_SetDate(&hrtc, &sDate, RTC_FORMAT_BCD) != HAL_OK) {
+		if (HAL_RTC_SetDate(&hrtc, &sDate, RTC_FORMAT_BIN) != HAL_OK) {
 			Error_Handler();
 		}
 	} else if (selected_option == 4 || selected_option == 5
 			|| selected_option == 6) {
-		if (HAL_RTC_SetTime(&hrtc, &sTime, RTC_FORMAT_BCD) != HAL_OK) {
+		if (HAL_RTC_SetTime(&hrtc, &sTime, RTC_FORMAT_BIN) != HAL_OK) {
 			Error_Handler();
 		}
 	}
@@ -534,7 +534,7 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart) {
 	handle_received_char((char) Rx_data[0]);
 	if (line_valid) {
 		HAL_UART_Transmit(&huart1, (uint8_t*) &"\r\n", 2, 10);
-		selected_option = (int) strtol((const char*) line_buffer, NULL, 16);
+		selected_option = (int) atoi((const char*) line_buffer);
 		if (menu_state == 2) {
 			update_date_time(change_time_menu_option, selected_option);
 			display_current_time();
