@@ -23,6 +23,7 @@
 /* USER CODE BEGIN Includes */
 #include <stdio.h>
 #include <string.h>
+#include <stdlib.h>
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -202,7 +203,11 @@ static void MX_RTC_Init(void)
   }
 
   /* USER CODE BEGIN Check_RTC_BKUP */
-
+	if (HAL_RTCEx_BKUPRead(&hrtc, RTC_BKP_DR0) == 0xcafe) {
+		return;
+	} else {
+		HAL_RTCEx_BKUPWrite(&hrtc, RTC_BKP_DR0, 0xcafe);
+	}
   /* USER CODE END Check_RTC_BKUP */
 
   /** Initialize RTC and set the Time and Date
@@ -334,6 +339,12 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Pull = GPIO_PULLUP;
   HAL_GPIO_Init(BUTTON_GPIO_Port, &GPIO_InitStruct);
 
+  /*Configure GPIO pin : MENU_Pin */
+  GPIO_InitStruct.Pin = MENU_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_IT_RISING;
+  GPIO_InitStruct.Pull = GPIO_PULLUP;
+  HAL_GPIO_Init(MENU_GPIO_Port, &GPIO_InitStruct);
+
   /*Configure GPIO pins : LED1_Pin LED2_Pin */
   GPIO_InitStruct.Pin = LED1_Pin|LED2_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
@@ -345,29 +356,59 @@ static void MX_GPIO_Init(void)
   HAL_NVIC_SetPriority(EXTI3_IRQn, 0, 0);
   HAL_NVIC_EnableIRQ(EXTI3_IRQn);
 
+  HAL_NVIC_SetPriority(EXTI4_IRQn, 0, 0);
+  HAL_NVIC_EnableIRQ(EXTI4_IRQn);
+
 }
 
 /* USER CODE BEGIN 4 */
 
 int state = 1;
-char message[100];
+
 RTC_TimeTypeDef sTime = {0};
 RTC_DateTypeDef sDate = {0};
 
+int menu_state = 0;
+
+#define LINEMAX 200 // Maximal allowed/expected line length
+volatile char line_buffer[LINEMAX + 1]; // Holding buffer with space for terminating NUL
+volatile int line_valid = 0;
+static char rx_buffer[LINEMAX];   // Local holding buffer to build line
+static int rx_index = 0;
+
+void invalidate_buffer() {
+	line_valid = 0;
+	rx_index = 0;
+}
+char menu[] =
+		"Options:\r\n1. Show current time\r\n2. Change date/time\r\n3. Exit\r\n";
+
+void display_main_menu() {
+	HAL_UART_Transmit(&huart1, (uint8_t*) menu, sizeof(menu), 10);
+	menu_state = 0;
+	invalidate_buffer();
+}
+
+char message[100];
+
 void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin) {
-	if (state) {
-		state = 0;
-		HAL_TIM_Base_Start_IT(&htim1);
+	if (GPIO_Pin == BUTTON_Pin) {
+		if (state) {
+			state = 0;
+			HAL_TIM_Base_Start_IT(&htim1);
 
-		HAL_RTC_GetTime(&hrtc, &sTime, RTC_FORMAT_BIN);
-		HAL_RTC_GetDate(&hrtc, &sDate, RTC_FORMAT_BIN);
+			HAL_RTC_GetTime(&hrtc, &sTime, RTC_FORMAT_BIN);
+			HAL_RTC_GetDate(&hrtc, &sDate, RTC_FORMAT_BIN);
 
-		sprintf(message, "%s\tDate: %02d.%02d.%02d\tTime: %02d.%02d.%02d\r\n",
-				"button pressed",
-				sDate.Date, sDate.Month, sDate.Year, sTime.Hours, sTime.Minutes,
-				sTime.Seconds);
+			sprintf(message,
+					"%s\tDate: %02d.%02d.%02d\tTime: %02d.%02d.%02d\r\n",
+					"button pressed", sDate.Date, sDate.Month, sDate.Year,
+					sTime.Hours, sTime.Minutes, sTime.Seconds);
 
-		HAL_UART_Transmit(&huart1, (uint8_t*) message, sizeof(message), 10); // Sending in normal mode
+			HAL_UART_Transmit(&huart1, (uint8_t*) message, sizeof(message), 10); // Sending in normal mode
+		}
+	} else if (GPIO_Pin == MENU_Pin) {
+		display_main_menu();
 	}
 }
 
@@ -381,22 +422,63 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim) {
 	}
 }
 
+int change_time_menu_option = 0;
+char change_time_menu[] = "Change:\r\n1. Day\r\n2. Month\r\n3. Year\r\n4. Hour\r\n5. Minute\r\n6. Seconds\r\n7. Exit\r\n";
+char unkown_option[] = "unknown option\r\n";
+char enter_new_value [] = "Please enter new value: ";
+char current_time_message[100];
 
-#define LINEMAX 200 // Maximal allowed/expected line length
-volatile char line_buffer[LINEMAX + 1]; // Holding buffer with space for terminating NUL
-volatile int line_valid = 0;
-static char rx_buffer[LINEMAX];   // Local holding buffer to build line
-static int rx_index = 0;
+void display_current_time() {
+	HAL_RTC_GetTime(&hrtc, &sTime, RTC_FORMAT_BIN);
+	HAL_RTC_GetDate(&hrtc, &sDate, RTC_FORMAT_BIN);
+	sprintf(current_time_message,
+			"%s\tDate: %02d.%02d.%02d\tTime: %02d.%02d.%02d\r\n",
+			"current date/time", sDate.Date, sDate.Month, sDate.Year,
+			sTime.Hours, sTime.Minutes, sTime.Seconds);
+	HAL_UART_Transmit(&huart1, (uint8_t*) current_time_message,
+			sizeof(current_time_message), 10);
+}
 
-void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart) {
-	handle_received_char((char) Rx_data[0]);
-	if (line_valid) {
-		HAL_UART_Transmit(&huart1, (uint8_t*) &"\r\n", 2, 10);
-		line_valid = 0;
-	} else {
-		HAL_UART_Transmit(&huart1, (uint8_t*) Rx_data, sizeof(Rx_data), 10);
+void display_change_time_menu() {
+	HAL_UART_Transmit(&huart1, (uint8_t*) change_time_menu,
+			sizeof(change_time_menu), 10);
+	menu_state = 1;
+}
+
+void update_date_time(int selected_option, int value) {
+	HAL_RTC_GetTime(&hrtc, &sTime, RTC_FORMAT_BIN);
+	HAL_RTC_GetDate(&hrtc, &sDate, RTC_FORMAT_BIN);
+
+	switch (selected_option) {
+	case 1:
+		sDate.Date = value;
+		break;
+	case 2:
+		sDate.Month = value;
+		break;
+	case 3:
+		sDate.Year = value;
+		break;
+	case 4:
+		sTime.Hours = value;
+		break;
+	case 5:
+		sTime.Minutes = value;
+		break;
+	case 6:
+		sTime.Seconds = value;
+		break;
 	}
-	HAL_UART_Receive_IT(&huart1, Rx_data, 1);
+	if (selected_option == 1 || selected_option == 2 || selected_option == 3) {
+		if (HAL_RTC_SetDate(&hrtc, &sDate, RTC_FORMAT_BCD) != HAL_OK) {
+			Error_Handler();
+		}
+	} else if (selected_option == 4 || selected_option == 5
+			|| selected_option == 6) {
+		if (HAL_RTC_SetTime(&hrtc, &sTime, RTC_FORMAT_BCD) != HAL_OK) {
+			Error_Handler();
+		}
+	}
 }
 
 void handle_received_char(char rx) {
@@ -405,7 +487,6 @@ void handle_received_char(char rx) {
 			memcpy((void*) line_buffer, rx_buffer, rx_index); // Copy to static line buffer from dynamic receive buffer
 			line_buffer[rx_index] = 0; // Add terminating NUL
 			line_valid = 1; // flag new line valid for processing
-
 			rx_index = 0; // Reset content pointer
 		}
 	} else {
@@ -413,6 +494,57 @@ void handle_received_char(char rx) {
 			rx_index = 0;
 		rx_buffer[rx_index++] = rx; // Copy to buffer and increment
 	}
+}
+
+void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart) {
+	int selected_option = atoi((const char*) Rx_data);
+	if (menu_state == 1) {
+		switch (selected_option) {
+		case 7:
+			display_main_menu();
+			HAL_UART_Receive_IT(&huart1, Rx_data, 1);
+			break;
+		default:
+			change_time_menu_option = selected_option;
+			HAL_UART_Transmit(&huart1, (uint8_t*) enter_new_value,
+					sizeof(enter_new_value), 10);
+			HAL_UART_Receive_IT(&huart1, Rx_data, 1);
+			menu_state = 2;
+		}
+		return;
+	} else if (menu_state == 0) {
+		switch (selected_option) {
+		case 1:
+			display_current_time();
+			display_main_menu();
+			HAL_UART_Receive_IT(&huart1, Rx_data, 1);
+			return;
+		case 2:
+			display_change_time_menu();
+			HAL_UART_Receive_IT(&huart1, Rx_data, 1);
+			return;
+		default:
+			HAL_UART_Transmit(&huart1, (uint8_t*) unkown_option,
+					sizeof(unkown_option), 10);
+			display_main_menu();
+			HAL_UART_Receive_IT(&huart1, Rx_data, 1);
+			return;
+		}
+	}
+	handle_received_char((char) Rx_data[0]);
+	if (line_valid) {
+		HAL_UART_Transmit(&huart1, (uint8_t*) &"\r\n", 2, 10);
+		selected_option = (int) strtol((const char*) line_buffer, NULL, 16);
+		if (menu_state == 2) {
+			update_date_time(change_time_menu_option, selected_option);
+			display_current_time();
+			display_change_time_menu();
+		}
+		invalidate_buffer();
+	} else {
+		HAL_UART_Transmit(&huart1, (uint8_t*) Rx_data, sizeof(Rx_data), 10);
+	}
+	HAL_UART_Receive_IT(&huart1, Rx_data, 1);
 }
 
 /* USER CODE END 4 */

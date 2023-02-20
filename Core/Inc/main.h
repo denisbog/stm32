@@ -60,6 +60,9 @@ void Error_Handler(void);
 #define BUTTON_Pin GPIO_PIN_3
 #define BUTTON_GPIO_Port GPIOE
 #define BUTTON_EXTI_IRQn EXTI3_IRQn
+#define MENU_Pin GPIO_PIN_4
+#define MENU_GPIO_Port GPIOE
+#define MENU_EXTI_IRQn EXTI4_IRQn
 #define LED1_Pin GPIO_PIN_6
 #define LED1_GPIO_Port GPIOA
 #define LED2_Pin GPIO_PIN_7
