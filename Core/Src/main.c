@@ -438,7 +438,7 @@ long get_epoch_time(){
     return currentTime;
 }
 
-void flash_erase_chip(void) {
+void flash_erase_chip() {
 	uint8_t Write_Enable = 0x06;
 	uint8_t Erase_Chip = 0xC7;
 
@@ -453,37 +453,52 @@ void flash_erase_chip(void) {
 	HAL_RTCEx_BKUPWrite(&hrtc, RTC_BKP_DR1, 0);
 }
 
-
 char temp_time [20];
+uint8_t send_address[3];
 
-void flash_read_data(uint8_t *buffer, uint8_t len) {
+void flash_read_data() {
 	uint8_t Read_Data = 0x03;
-	for (uint32_t address = HAL_RTCEx_BKUPRead(&hrtc, RTC_BKP_DR1); address > 0;
-			) {
-		address -= 4;
+	uint32_t address = HAL_RTCEx_BKUPRead(&hrtc, RTC_BKP_DR1);
+	sprintf(temp_time, "logged events: %d\r\n", address / 4);
+	HAL_UART_Transmit(&huart1, (uint8_t*) temp_time, strlen(temp_time), 10);
+
+
+	for (uint32_t temp = 0; temp < address; temp += 4) {
 		HAL_GPIO_WritePin(F_CS_GPIO_Port, F_CS_Pin, RESET);
 		HAL_SPI_Transmit(&hspi1, &Read_Data, 1, 1000);  // Read Command
-		HAL_SPI_Transmit(&hspi1, &address, 3, 1000);    // Write Address
+
+		send_address[2] = temp;
+		send_address[1] = temp >> 8;
+		send_address[0] = temp >> 16;
+
+		HAL_SPI_Transmit(&hspi1, &send_address, 3, 1000);    // Write Address
 		long temp_date;
 		HAL_SPI_Receive(&hspi1, &temp_date, 4, 1000);
 		HAL_GPIO_WritePin(F_CS_GPIO_Port, F_CS_Pin, SET);
 
 		sprintf(temp_time, "%d\r\n", temp_date);
-		HAL_UART_Transmit(&huart1, (uint8_t*) temp_time, sizeof(temp_time), 10);
+		HAL_UART_Transmit(&huart1, (uint8_t*) temp_time, strlen(temp_time), 10);
 	}
 }
 
-void flash_write_data(uint8_t *buffer, uint8_t len) {
+void flash_write_data() {
 	uint8_t Write_Enable = 0x06;
 	uint8_t Page_Program = 0x02;
 	uint32_t address = HAL_RTCEx_BKUPRead(&hrtc, RTC_BKP_DR1);
+
 	HAL_GPIO_WritePin(F_CS_GPIO_Port, F_CS_Pin, RESET);
 	HAL_SPI_Transmit(&hspi1, &Write_Enable, 1, 1000); // Write Enable Command
 	HAL_GPIO_WritePin(F_CS_GPIO_Port, F_CS_Pin, SET);
 
 	HAL_GPIO_WritePin(F_CS_GPIO_Port, F_CS_Pin, RESET);
 	HAL_SPI_Transmit(&hspi1, &Page_Program, 1, 1000); // Page Program Command
-	HAL_SPI_Transmit(&hspi1, &address, 3, 1000); // Write Address ( The first address of flash module is 0x00000000 )
+
+
+	send_address[2] = address;
+	send_address[1] = address >> 8;
+	send_address[0] = address >> 16;
+
+	HAL_SPI_Transmit(&hspi1, &send_address, 3, 1000);
 	long temp_time = get_epoch_time();
 	HAL_SPI_Transmit(&hspi1, &temp_time, 4, 1000);
 	HAL_GPIO_WritePin(F_CS_GPIO_Port, F_CS_Pin, SET);
@@ -511,7 +526,7 @@ char menu[] =
 		"Options:\r\n1. Show current time\r\n2. Change date/time\r\n3. Log event\r\n4. Read all\r\n5. Erase all\r\n";
 
 void display_main_menu() {
-	HAL_UART_Transmit(&huart1, (uint8_t*) menu, sizeof(menu), 10);
+	HAL_UART_Transmit(&huart1, (uint8_t*) menu, strlen(menu), 10);
 	menu_state = 0;
 	invalidate_buffer();
 }
@@ -531,10 +546,12 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin) {
 
 			sprintf(message,
 					"%s\tDate: %02d.%02d.%02d\tTime: %02d.%02d.%02d (%d)\r\n",
-					"button pressed", sDate.Date, sDate.Month, sDate.Year,
+					"button pressed (event logged)", sDate.Date, sDate.Month, sDate.Year,
 					sTime.Hours, sTime.Minutes, sTime.Seconds, get_epoch_time());
 
-			HAL_UART_Transmit(&huart1, (uint8_t*) message, sizeof(message), 10); // Sending in normal mode
+			flash_write_data();
+
+			HAL_UART_Transmit(&huart1, (uint8_t*) message, strlen(message), 10); // Sending in normal mode
 		}
 	} else if (GPIO_Pin == MENU_Pin) {
 		display_main_menu();
@@ -547,7 +564,7 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim) {
 	if (HAL_GPIO_ReadPin(BUTTON_GPIO_Port, BUTTON_Pin) == GPIO_PIN_SET) {
 		state = 1;
 		HAL_TIM_Base_Stop_IT(&htim1);
-		HAL_UART_Transmit(&huart1, deactivate_message, sizeof(deactivate_message), 10);
+		HAL_UART_Transmit(&huart1, deactivate_message, strlen(deactivate_message), 10);
 	}
 }
 
@@ -565,12 +582,12 @@ void display_current_time() {
 			"current date/time", sDate.Date, sDate.Month, sDate.Year,
 			sTime.Hours, sTime.Minutes, sTime.Seconds);
 	HAL_UART_Transmit(&huart1, (uint8_t*) current_time_message,
-			sizeof(current_time_message), 10);
+			strlen(current_time_message), 10);
 }
 
 void display_change_time_menu() {
 	HAL_UART_Transmit(&huart1, (uint8_t*) change_time_menu,
-			sizeof(change_time_menu), 10);
+			strlen(change_time_menu), 10);
 	menu_state = 1;
 }
 
@@ -638,7 +655,7 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart) {
 		default:
 			change_time_menu_option = selected_option;
 			HAL_UART_Transmit(&huart1, (uint8_t*) enter_new_value,
-					sizeof(enter_new_value), 10);
+					strlen(enter_new_value), 10);
 			HAL_UART_Receive_IT(&huart1, Rx_data, 1);
 			menu_state = 2;
 		}
@@ -655,8 +672,7 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart) {
 			HAL_UART_Receive_IT(&huart1, Rx_data, 1);
 			return;
 		case 3:
-			flash_write_data(current_time_message_flash,
-					sizeof(current_time_message_flash));
+			flash_write_data();
 
 			HAL_RTC_GetTime(&hrtc, &sTime, RTC_FORMAT_BIN);
 			HAL_RTC_GetDate(&hrtc, &sDate, RTC_FORMAT_BIN);
@@ -666,12 +682,12 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart) {
 					"log event", sDate.Date, sDate.Month, sDate.Year, sTime.Hours,
 					sTime.Minutes, sTime.Seconds);
 
-			HAL_UART_Transmit(&huart1, (uint8_t*) current_time_message_flash, sizeof(current_time_message_flash), 10);
+			HAL_UART_Transmit(&huart1, (uint8_t*) current_time_message_flash, strlen(current_time_message_flash), 10);
 			display_main_menu();
 			HAL_UART_Receive_IT(&huart1, Rx_data, 1);
 			return;
 		case 4:
-			flash_read_data(toread, sizeof(current_time_message_flash));
+			flash_read_data();
 			display_main_menu();
 			HAL_UART_Receive_IT(&huart1, Rx_data, 1);
 			return;
@@ -682,7 +698,7 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart) {
 			return;
 		default:
 			HAL_UART_Transmit(&huart1, (uint8_t*) unkown_option,
-					sizeof(unkown_option), 10);
+					strlen(unkown_option), 10);
 			display_main_menu();
 			HAL_UART_Receive_IT(&huart1, Rx_data, 1);
 			return;
@@ -699,7 +715,7 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart) {
 		}
 		invalidate_buffer();
 	} else {
-		HAL_UART_Transmit(&huart1, (uint8_t*) Rx_data, sizeof(Rx_data), 10);
+		HAL_UART_Transmit(&huart1, (uint8_t*) Rx_data, strlen(Rx_data), 10);
 	}
 	HAL_UART_Receive_IT(&huart1, Rx_data, 1);
 }
