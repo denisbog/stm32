@@ -24,11 +24,11 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
+#include <time.h>
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
 /* USER CODE BEGIN PTD */
-
 /* USER CODE END PTD */
 
 /* Private define ------------------------------------------------------------*/
@@ -42,6 +42,8 @@
 
 /* Private variables ---------------------------------------------------------*/
 RTC_HandleTypeDef hrtc;
+
+SPI_HandleTypeDef hspi1;
 
 TIM_HandleTypeDef htim1;
 
@@ -57,6 +59,7 @@ static void MX_GPIO_Init(void);
 static void MX_USART1_UART_Init(void);
 static void MX_TIM1_Init(void);
 static void MX_RTC_Init(void);
+static void MX_SPI1_Init(void);
 /* USER CODE BEGIN PFP */
 
 /* USER CODE END PFP */
@@ -97,6 +100,7 @@ int main(void)
   MX_USART1_UART_Init();
   MX_TIM1_Init();
   MX_RTC_Init();
+  MX_SPI1_Init();
   /* USER CODE BEGIN 2 */
 
 	int step = 10;
@@ -237,6 +241,44 @@ static void MX_RTC_Init(void)
 }
 
 /**
+  * @brief SPI1 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_SPI1_Init(void)
+{
+
+  /* USER CODE BEGIN SPI1_Init 0 */
+
+  /* USER CODE END SPI1_Init 0 */
+
+  /* USER CODE BEGIN SPI1_Init 1 */
+
+  /* USER CODE END SPI1_Init 1 */
+  /* SPI1 parameter configuration*/
+  hspi1.Instance = SPI1;
+  hspi1.Init.Mode = SPI_MODE_MASTER;
+  hspi1.Init.Direction = SPI_DIRECTION_2LINES;
+  hspi1.Init.DataSize = SPI_DATASIZE_8BIT;
+  hspi1.Init.CLKPolarity = SPI_POLARITY_LOW;
+  hspi1.Init.CLKPhase = SPI_PHASE_1EDGE;
+  hspi1.Init.NSS = SPI_NSS_SOFT;
+  hspi1.Init.BaudRatePrescaler = SPI_BAUDRATEPRESCALER_2;
+  hspi1.Init.FirstBit = SPI_FIRSTBIT_MSB;
+  hspi1.Init.TIMode = SPI_TIMODE_DISABLE;
+  hspi1.Init.CRCCalculation = SPI_CRCCALCULATION_DISABLE;
+  hspi1.Init.CRCPolynomial = 10;
+  if (HAL_SPI_Init(&hspi1) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN SPI1_Init 2 */
+
+  /* USER CODE END SPI1_Init 2 */
+
+}
+
+/**
   * @brief TIM1 Initialization Function
   * @param None
   * @retval None
@@ -333,6 +375,9 @@ static void MX_GPIO_Init(void)
   /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(GPIOA, LED1_Pin|LED2_Pin, GPIO_PIN_RESET);
 
+  /*Configure GPIO pin Output Level */
+  HAL_GPIO_WritePin(F_CS_GPIO_Port, F_CS_Pin, GPIO_PIN_RESET);
+
   /*Configure GPIO pin : BUTTON_Pin */
   GPIO_InitStruct.Pin = BUTTON_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_IT_FALLING;
@@ -352,6 +397,13 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
 
+  /*Configure GPIO pin : F_CS_Pin */
+  GPIO_InitStruct.Pin = F_CS_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+  HAL_GPIO_Init(F_CS_GPIO_Port, &GPIO_InitStruct);
+
   /* EXTI interrupt init*/
   HAL_NVIC_SetPriority(EXTI3_IRQn, 0, 0);
   HAL_NVIC_EnableIRQ(EXTI3_IRQn);
@@ -362,6 +414,81 @@ static void MX_GPIO_Init(void)
 }
 
 /* USER CODE BEGIN 4 */
+long get_epoch_time(){
+    RTC_DateTypeDef rtcDate;
+    RTC_TimeTypeDef rtcTime;
+    HAL_RTC_GetTime(&hrtc, &rtcTime, RTC_FORMAT_BIN);
+    HAL_RTC_GetDate(&hrtc, &rtcDate, RTC_FORMAT_BIN);
+    uint8_t hh = rtcTime.Hours;
+    uint8_t mm = rtcTime.Minutes;
+    uint8_t ss = rtcTime.Seconds;
+    uint8_t d = rtcDate.Date;
+    uint8_t m = rtcDate.Month;
+    uint16_t y = rtcDate.Year;
+    uint16_t yr = (uint16_t)(y+2000-1900);
+    time_t currentTime = {0};
+    struct tm tim = {0};
+    tim.tm_year = yr;
+    tim.tm_mon = m - 1;
+    tim.tm_mday = d;
+    tim.tm_hour = hh;
+    tim.tm_min = mm;
+    tim.tm_sec = ss;
+    currentTime = mktime(&tim);
+    return currentTime;
+}
+
+void flash_erase_chip(void) {
+	uint8_t Write_Enable = 0x06;
+	uint8_t Erase_Chip = 0xC7;
+
+	HAL_GPIO_WritePin(F_CS_GPIO_Port, F_CS_Pin, RESET);     // CS to low
+	HAL_SPI_Transmit(&hspi1, &Write_Enable, 1, 1000); // Write Enable Command
+	HAL_GPIO_WritePin(F_CS_GPIO_Port, F_CS_Pin, SET);       // CS to high
+
+	HAL_GPIO_WritePin(F_CS_GPIO_Port, F_CS_Pin, RESET);     // CS to low
+	HAL_SPI_Transmit(&hspi1, &Erase_Chip, 1, 1000);   // Erase Chip Command
+	HAL_GPIO_WritePin(F_CS_GPIO_Port, F_CS_Pin, SET);       // CS to high
+
+	HAL_RTCEx_BKUPWrite(&hrtc, RTC_BKP_DR1, 0);
+}
+
+
+char temp_time [20];
+
+void flash_read_data(uint8_t *buffer, uint8_t len) {
+	uint8_t Read_Data = 0x03;
+	for (uint32_t address = HAL_RTCEx_BKUPRead(&hrtc, RTC_BKP_DR1); address > 0;
+			) {
+		address -= 4;
+		HAL_GPIO_WritePin(F_CS_GPIO_Port, F_CS_Pin, RESET);
+		HAL_SPI_Transmit(&hspi1, &Read_Data, 1, 1000);  // Read Command
+		HAL_SPI_Transmit(&hspi1, &address, 3, 1000);    // Write Address
+		long temp_date;
+		HAL_SPI_Receive(&hspi1, &temp_date, 4, 1000);
+		HAL_GPIO_WritePin(F_CS_GPIO_Port, F_CS_Pin, SET);
+
+		sprintf(temp_time, "%d\r\n", temp_date);
+		HAL_UART_Transmit(&huart1, (uint8_t*) temp_time, sizeof(temp_time), 10);
+	}
+}
+
+void flash_write_data(uint8_t *buffer, uint8_t len) {
+	uint8_t Write_Enable = 0x06;
+	uint8_t Page_Program = 0x02;
+	uint32_t address = HAL_RTCEx_BKUPRead(&hrtc, RTC_BKP_DR1);
+	HAL_GPIO_WritePin(F_CS_GPIO_Port, F_CS_Pin, RESET);
+	HAL_SPI_Transmit(&hspi1, &Write_Enable, 1, 1000); // Write Enable Command
+	HAL_GPIO_WritePin(F_CS_GPIO_Port, F_CS_Pin, SET);
+
+	HAL_GPIO_WritePin(F_CS_GPIO_Port, F_CS_Pin, RESET);
+	HAL_SPI_Transmit(&hspi1, &Page_Program, 1, 1000); // Page Program Command
+	HAL_SPI_Transmit(&hspi1, &address, 3, 1000); // Write Address ( The first address of flash module is 0x00000000 )
+	long temp_time = get_epoch_time();
+	HAL_SPI_Transmit(&hspi1, &temp_time, 4, 1000);
+	HAL_GPIO_WritePin(F_CS_GPIO_Port, F_CS_Pin, SET);
+	HAL_RTCEx_BKUPWrite(&hrtc, RTC_BKP_DR1, address + 4);
+}
 
 int state = 1;
 
@@ -381,13 +508,15 @@ void invalidate_buffer() {
 	rx_index = 0;
 }
 char menu[] =
-		"Options:\r\n1. Show current time\r\n2. Change date/time\r\n3. Exit\r\n";
+		"Options:\r\n1. Show current time\r\n2. Change date/time\r\n3. Log event\r\n4. Read all\r\n5. Erase all\r\n";
 
 void display_main_menu() {
 	HAL_UART_Transmit(&huart1, (uint8_t*) menu, sizeof(menu), 10);
 	menu_state = 0;
 	invalidate_buffer();
 }
+
+
 
 char message[100];
 
@@ -401,9 +530,9 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin) {
 			HAL_RTC_GetDate(&hrtc, &sDate, RTC_FORMAT_BIN);
 
 			sprintf(message,
-					"%s\tDate: %02d.%02d.%02d\tTime: %02d.%02d.%02d\r\n",
+					"%s\tDate: %02d.%02d.%02d\tTime: %02d.%02d.%02d (%d)\r\n",
 					"button pressed", sDate.Date, sDate.Month, sDate.Year,
-					sTime.Hours, sTime.Minutes, sTime.Seconds);
+					sTime.Hours, sTime.Minutes, sTime.Seconds, get_epoch_time());
 
 			HAL_UART_Transmit(&huart1, (uint8_t*) message, sizeof(message), 10); // Sending in normal mode
 		}
@@ -427,7 +556,7 @@ char change_time_menu[] = "Change:\r\n1. Day\r\n2. Month\r\n3. Year\r\n4. Hour\r
 char unkown_option[] = "unknown option\r\n";
 char enter_new_value [] = "Please enter new value: ";
 char current_time_message[100];
-
+char current_time_message_flash[100];
 void display_current_time() {
 	HAL_RTC_GetTime(&hrtc, &sTime, RTC_FORMAT_BIN);
 	HAL_RTC_GetDate(&hrtc, &sDate, RTC_FORMAT_BIN);
@@ -496,6 +625,8 @@ void handle_received_char(char rx) {
 	}
 }
 
+unsigned char towrite [] = "checkme";
+unsigned char toread [100];
 void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart) {
 	int selected_option = atoi((const char*) Rx_data);
 	if (menu_state == 1) {
@@ -521,6 +652,32 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart) {
 			return;
 		case 2:
 			display_change_time_menu();
+			HAL_UART_Receive_IT(&huart1, Rx_data, 1);
+			return;
+		case 3:
+			flash_write_data(current_time_message_flash,
+					sizeof(current_time_message_flash));
+
+			HAL_RTC_GetTime(&hrtc, &sTime, RTC_FORMAT_BIN);
+			HAL_RTC_GetDate(&hrtc, &sDate, RTC_FORMAT_BIN);
+
+			sprintf(current_time_message_flash,
+					"%s\tDate: %02d.%02d.%02d\tTime: %02d.%02d.%02d\r\n",
+					"log event", sDate.Date, sDate.Month, sDate.Year, sTime.Hours,
+					sTime.Minutes, sTime.Seconds);
+
+			HAL_UART_Transmit(&huart1, (uint8_t*) current_time_message_flash, sizeof(current_time_message_flash), 10);
+			display_main_menu();
+			HAL_UART_Receive_IT(&huart1, Rx_data, 1);
+			return;
+		case 4:
+			flash_read_data(toread, sizeof(current_time_message_flash));
+			display_main_menu();
+			HAL_UART_Receive_IT(&huart1, Rx_data, 1);
+			return;
+		case 5:
+			flash_erase_chip();
+			display_main_menu();
 			HAL_UART_Receive_IT(&huart1, Rx_data, 1);
 			return;
 		default:
