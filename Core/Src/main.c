@@ -44,6 +44,8 @@
 RTC_HandleTypeDef hrtc;
 
 SPI_HandleTypeDef hspi1;
+DMA_HandleTypeDef hdma_spi1_rx;
+DMA_HandleTypeDef hdma_spi1_tx;
 
 TIM_HandleTypeDef htim1;
 
@@ -51,17 +53,21 @@ UART_HandleTypeDef huart1;
 
 /* USER CODE BEGIN PV */
 uint8_t Rx_data[1];
+
+uint32_t read = 0;
+uint32_t command = 0;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
 void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
+static void MX_DMA_Init(void);
 static void MX_USART1_UART_Init(void);
 static void MX_TIM1_Init(void);
 static void MX_RTC_Init(void);
 static void MX_SPI1_Init(void);
 /* USER CODE BEGIN PFP */
-
+void read_from_address(uint32_t);
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -97,6 +103,7 @@ int main(void)
 
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
+  MX_DMA_Init();
   MX_USART1_UART_Init();
   MX_TIM1_Init();
   MX_RTC_Init();
@@ -118,6 +125,10 @@ int main(void)
 		HAL_GPIO_WritePin(LED1_GPIO_Port, LED1_Pin, 0);
 		HAL_GPIO_WritePin(LED2_GPIO_Port, LED2_Pin, 1);
 		HAL_Delay(100 + step % 100);
+
+		if (command == 1) {
+			read_from_address(read * 4);
+		}
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
@@ -358,6 +369,25 @@ static void MX_USART1_UART_Init(void)
 }
 
 /**
+  * Enable DMA controller clock
+  */
+static void MX_DMA_Init(void)
+{
+
+  /* DMA controller clock enable */
+  __HAL_RCC_DMA2_CLK_ENABLE();
+
+  /* DMA interrupt init */
+  /* DMA2_Stream0_IRQn interrupt configuration */
+  HAL_NVIC_SetPriority(DMA2_Stream0_IRQn, 0, 0);
+  HAL_NVIC_EnableIRQ(DMA2_Stream0_IRQn);
+  /* DMA2_Stream3_IRQn interrupt configuration */
+  HAL_NVIC_SetPriority(DMA2_Stream3_IRQn, 0, 0);
+  HAL_NVIC_EnableIRQ(DMA2_Stream3_IRQn);
+
+}
+
+/**
   * @brief GPIO Initialization Function
   * @param None
   * @retval None
@@ -455,30 +485,54 @@ void flash_erase_chip() {
 
 char temp_time [20];
 uint8_t send_address[3];
+#define buf_size 20
+long temp_date[buf_size];
+uint32_t items;
+
+
+
+uint32_t to_read;
 
 void flash_read_data() {
-	uint8_t Read_Data = 0x03;
+	read = 0;
+	to_read = 0;
+	command = 1 ;
 	uint32_t address = HAL_RTCEx_BKUPRead(&hrtc, RTC_BKP_DR1);
-	sprintf(temp_time, "logged events: %d\r\n", address / 4);
+	items = address / 4;
+	sprintf(temp_time, "logged events: %d\r\n", items);
 	HAL_UART_Transmit(&huart1, (uint8_t*) temp_time, strlen(temp_time), 10);
+}
 
-
-	for (uint32_t temp = 0; temp < address; temp += 4) {
+void read_from_address(uint32_t start_address) {
+	if (items - read > buf_size) {
+		to_read = buf_size;
+	} else {
+		to_read = items - read;
+	}
+	if (to_read > 0) {
+		uint8_t Read_Data = 0x03;
 		HAL_GPIO_WritePin(F_CS_GPIO_Port, F_CS_Pin, RESET);
 		HAL_SPI_Transmit(&hspi1, &Read_Data, 1, 1000);  // Read Command
 
-		send_address[2] = temp;
-		send_address[1] = temp >> 8;
-		send_address[0] = temp >> 16;
+		send_address[2] = start_address;
+		send_address[1] = start_address >> 8;
+		send_address[0] = start_address >> 16;
 
-		HAL_SPI_Transmit(&hspi1, &send_address, 3, 1000);    // Write Address
-		long temp_date;
-		HAL_SPI_Receive(&hspi1, &temp_date, 4, 1000);
-		HAL_GPIO_WritePin(F_CS_GPIO_Port, F_CS_Pin, SET);
+		HAL_SPI_Transmit(&hspi1, send_address, 3, 1000);    // Write Address
 
-		sprintf(temp_time, "%d\r\n", temp_date);
+		HAL_SPI_Receive_DMA(&hspi1, temp_date, to_read * 4);
+	}else {
+		command = 0;
+	}
+}
+
+void HAL_SPI_RxCpltCallback(SPI_HandleTypeDef *hspi) {
+	HAL_GPIO_WritePin(F_CS_GPIO_Port, F_CS_Pin, SET);
+	for (int i = 0; i < to_read; ++i) {
+		sprintf(temp_time, "%d\r\n", temp_date[i]);
 		HAL_UART_Transmit(&huart1, (uint8_t*) temp_time, strlen(temp_time), 10);
 	}
+	read += to_read;
 }
 
 void flash_write_data() {
