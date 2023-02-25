@@ -519,9 +519,11 @@ void read_from_address(uint32_t start_address) {
 		send_address[0] = start_address >> 16;
 
 		HAL_SPI_Transmit(&hspi1, send_address, 3, 1000);    // Write Address
-
-		HAL_SPI_Receive_DMA(&hspi1, temp_date, to_read * 4);
-	}else {
+		if (HAL_SPI_Receive_DMA(&hspi1, temp_date, to_read * 4) != HAL_OK) {
+			Error_Handler();
+			command = 0;
+		}
+	} else {
 		command = 0;
 	}
 }
