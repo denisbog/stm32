@@ -485,7 +485,7 @@ void flash_erase_chip() {
 
 char temp_time [20];
 uint8_t send_address[3];
-#define buf_size 20
+#define buf_size 100
 long temp_date[buf_size];
 uint32_t items;
 
@@ -520,6 +520,7 @@ void read_from_address(uint32_t start_address) {
 
 		HAL_SPI_Transmit(&hspi1, send_address, 3, 1000);    // Write Address
 		if (HAL_SPI_Receive_DMA(&hspi1, temp_date, to_read * 4) != HAL_OK) {
+			HAL_GPIO_WritePin(F_CS_GPIO_Port, F_CS_Pin, SET);
 			Error_Handler();
 			command = 0;
 		}
