@@ -18,6 +18,7 @@
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
+#include "fatfs.h"
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
@@ -43,6 +44,10 @@
 /* Private variables ---------------------------------------------------------*/
 RTC_HandleTypeDef hrtc;
 
+SD_HandleTypeDef hsd;
+DMA_HandleTypeDef hdma_sdio_rx;
+DMA_HandleTypeDef hdma_sdio_tx;
+
 SPI_HandleTypeDef hspi1;
 DMA_HandleTypeDef hdma_spi1_rx;
 DMA_HandleTypeDef hdma_spi1_tx;
@@ -56,6 +61,11 @@ uint8_t Rx_data[1];
 
 uint32_t read = 0;
 uint32_t command = 0;
+
+RTC_TimeTypeDef sTime = {0};
+RTC_DateTypeDef sDate = {0};
+
+
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -66,6 +76,7 @@ static void MX_USART1_UART_Init(void);
 static void MX_TIM1_Init(void);
 static void MX_RTC_Init(void);
 static void MX_SPI1_Init(void);
+static void MX_SDIO_SD_Init(void);
 /* USER CODE BEGIN PFP */
 void read_from_address(uint32_t);
 /* USER CODE END PFP */
@@ -108,6 +119,8 @@ int main(void)
   MX_TIM1_Init();
   MX_RTC_Init();
   MX_SPI1_Init();
+  MX_SDIO_SD_Init();
+  MX_FATFS_Init();
   /* USER CODE BEGIN 2 */
 
 	int step = 10;
@@ -116,6 +129,9 @@ int main(void)
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
+
+
+
 	HAL_UART_Receive_IT(&huart1, Rx_data, 1);
 	while (1) {
 		step += 10;
@@ -128,6 +144,26 @@ int main(void)
 
 		if (command == 1) {
 			read_from_address(read * 4);
+		} else if (command == 2) {
+			HAL_RTC_GetTime(&hrtc, &sTime, RTC_FORMAT_BIN);
+			HAL_RTC_GetDate(&hrtc, &sDate, RTC_FORMAT_BIN);
+			char current_time_message_flash[100];
+			sprintf(current_time_message_flash,
+					"%s\tDate: %02d.%02d.%02d\tTime: %02d.%02d.%02d\r\n",
+					"log event", sDate.Date, sDate.Month, sDate.Year,
+					sTime.Hours, sTime.Minutes, sTime.Seconds);
+			if (f_mount(&SDFatFS, SDPath, 0) == FR_OK) {
+				if (f_open(&SDFile, "readme.txt", FA_CREATE_ALWAYS | FA_WRITE)
+						== FR_OK) {
+					uint32_t read_bytes = 0;
+					if (f_write(&SDFile, current_time_message_flash,
+							strlen(current_time_message_flash), &read_bytes)
+							== FR_OK) {
+						f_close(&SDFile);
+					}
+				}
+			}
+			command = 9;
 		}
     /* USER CODE END WHILE */
 
@@ -154,14 +190,13 @@ void SystemClock_Config(void)
   /** Initializes the RCC Oscillators according to the specified parameters
   * in the RCC_OscInitTypeDef structure.
   */
-  RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSI|RCC_OSCILLATORTYPE_LSE;
+  RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSE|RCC_OSCILLATORTYPE_LSE;
+  RCC_OscInitStruct.HSEState = RCC_HSE_ON;
   RCC_OscInitStruct.LSEState = RCC_LSE_ON;
-  RCC_OscInitStruct.HSIState = RCC_HSI_ON;
-  RCC_OscInitStruct.HSICalibrationValue = RCC_HSICALIBRATION_DEFAULT;
   RCC_OscInitStruct.PLL.PLLState = RCC_PLL_ON;
-  RCC_OscInitStruct.PLL.PLLSource = RCC_PLLSOURCE_HSI;
-  RCC_OscInitStruct.PLL.PLLM = 8;
-  RCC_OscInitStruct.PLL.PLLN = 64;
+  RCC_OscInitStruct.PLL.PLLSource = RCC_PLLSOURCE_HSE;
+  RCC_OscInitStruct.PLL.PLLM = 4;
+  RCC_OscInitStruct.PLL.PLLN = 96;
   RCC_OscInitStruct.PLL.PLLP = RCC_PLLP_DIV2;
   RCC_OscInitStruct.PLL.PLLQ = 4;
   if (HAL_RCC_OscConfig(&RCC_OscInitStruct) != HAL_OK)
@@ -174,11 +209,11 @@ void SystemClock_Config(void)
   RCC_ClkInitStruct.ClockType = RCC_CLOCKTYPE_HCLK|RCC_CLOCKTYPE_SYSCLK
                               |RCC_CLOCKTYPE_PCLK1|RCC_CLOCKTYPE_PCLK2;
   RCC_ClkInitStruct.SYSCLKSource = RCC_SYSCLKSOURCE_PLLCLK;
-  RCC_ClkInitStruct.AHBCLKDivider = RCC_SYSCLK_DIV64;
-  RCC_ClkInitStruct.APB1CLKDivider = RCC_HCLK_DIV4;
+  RCC_ClkInitStruct.AHBCLKDivider = RCC_SYSCLK_DIV2;
+  RCC_ClkInitStruct.APB1CLKDivider = RCC_HCLK_DIV2;
   RCC_ClkInitStruct.APB2CLKDivider = RCC_HCLK_DIV2;
 
-  if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_0) != HAL_OK)
+  if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_1) != HAL_OK)
   {
     Error_Handler();
   }
@@ -248,6 +283,34 @@ static void MX_RTC_Init(void)
   /* USER CODE BEGIN RTC_Init 2 */
 
   /* USER CODE END RTC_Init 2 */
+
+}
+
+/**
+  * @brief SDIO Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_SDIO_SD_Init(void)
+{
+
+  /* USER CODE BEGIN SDIO_Init 0 */
+
+  /* USER CODE END SDIO_Init 0 */
+
+  /* USER CODE BEGIN SDIO_Init 1 */
+
+  /* USER CODE END SDIO_Init 1 */
+  hsd.Instance = SDIO;
+  hsd.Init.ClockEdge = SDIO_CLOCK_EDGE_RISING;
+  hsd.Init.ClockBypass = SDIO_CLOCK_BYPASS_DISABLE;
+  hsd.Init.ClockPowerSave = SDIO_CLOCK_POWER_SAVE_DISABLE;
+  hsd.Init.BusWide = SDIO_BUS_WIDE_1B;
+  hsd.Init.HardwareFlowControl = SDIO_HARDWARE_FLOW_CONTROL_DISABLE;
+  hsd.Init.ClockDiv = 255;
+  /* USER CODE BEGIN SDIO_Init 2 */
+
+  /* USER CODE END SDIO_Init 2 */
 
 }
 
@@ -384,6 +447,12 @@ static void MX_DMA_Init(void)
   /* DMA2_Stream3_IRQn interrupt configuration */
   HAL_NVIC_SetPriority(DMA2_Stream3_IRQn, 0, 0);
   HAL_NVIC_EnableIRQ(DMA2_Stream3_IRQn);
+  /* DMA2_Stream5_IRQn interrupt configuration */
+  HAL_NVIC_SetPriority(DMA2_Stream5_IRQn, 0, 0);
+  HAL_NVIC_EnableIRQ(DMA2_Stream5_IRQn);
+  /* DMA2_Stream6_IRQn interrupt configuration */
+  HAL_NVIC_SetPriority(DMA2_Stream6_IRQn, 0, 0);
+  HAL_NVIC_EnableIRQ(DMA2_Stream6_IRQn);
 
 }
 
@@ -399,8 +468,10 @@ static void MX_GPIO_Init(void)
   /* GPIO Ports Clock Enable */
   __HAL_RCC_GPIOE_CLK_ENABLE();
   __HAL_RCC_GPIOC_CLK_ENABLE();
+  __HAL_RCC_GPIOH_CLK_ENABLE();
   __HAL_RCC_GPIOA_CLK_ENABLE();
   __HAL_RCC_GPIOB_CLK_ENABLE();
+  __HAL_RCC_GPIOD_CLK_ENABLE();
 
   /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(GPIOA, LED1_Pin|LED2_Pin, GPIO_PIN_RESET);
@@ -419,6 +490,12 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Mode = GPIO_MODE_IT_RISING;
   GPIO_InitStruct.Pull = GPIO_PULLUP;
   HAL_GPIO_Init(MENU_GPIO_Port, &GPIO_InitStruct);
+
+  /*Configure GPIO pin : PA2 */
+  GPIO_InitStruct.Pin = GPIO_PIN_2;
+  GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
+  GPIO_InitStruct.Pull = GPIO_PULLDOWN;
+  HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
 
   /*Configure GPIO pins : LED1_Pin LED2_Pin */
   GPIO_InitStruct.Pin = LED1_Pin|LED2_Pin;
@@ -564,8 +641,6 @@ void flash_write_data() {
 
 int state = 1;
 
-RTC_TimeTypeDef sTime = {0};
-RTC_DateTypeDef sDate = {0};
 
 int menu_state = 0;
 
@@ -580,15 +655,13 @@ void invalidate_buffer() {
 	rx_index = 0;
 }
 char menu[] =
-		"Options:\r\n1. Show current time\r\n2. Change date/time\r\n3. Log event\r\n4. Read all\r\n5. Erase all\r\n";
+		"Options:\r\n1. Show current time\r\n2. Change date/time\r\n3. Log event\r\n4. Read all\r\n5. Write to SD card\r\n6. Erase all from Flash\r\n";
 
 void display_main_menu() {
 	HAL_UART_Transmit(&huart1, (uint8_t*) menu, strlen(menu), 10);
 	menu_state = 0;
 	invalidate_buffer();
 }
-
-
 
 char message[100];
 
@@ -749,6 +822,10 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart) {
 			HAL_UART_Receive_IT(&huart1, Rx_data, 1);
 			return;
 		case 5:
+			command = 2;
+			HAL_UART_Receive_IT(&huart1, Rx_data, 1);
+			return;
+		case 6:
 			flash_erase_chip();
 			display_main_menu();
 			HAL_UART_Receive_IT(&huart1, Rx_data, 1);
